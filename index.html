@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Consultor LFT Inteligente</title>
+
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#075E54">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="description" content="Asistente legal inteligente experto en la Ley Federal del Trabajo de México.">
+    
+    <link rel="manifest" id="pwa-manifest">
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Dependencias de React -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+    <style>
+        :root { color-scheme: light dark; }
+        
+        body { 
+            margin: 0; 
+            padding: 0; 
+            overflow: hidden; 
+            background-color: #e5ddd5;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; 
+            transition: background-color 0.3s ease;
+        }
+
+        .bubble {
+            position: relative;
+            max-width: 85%;
+            padding: 10px 14px;
+            font-size: 14.5px;
+            line-height: 1.5;
+            margin-bottom: 12px;
+            box-shadow: 0 1px 0.5px rgba(0,0,0,0.13);
+            transition: all 0.3s ease;
+            color: #111b21;
+        }
+
+        .dark body { background-color: #0b141a; }
+
+        #root { height: 100vh; width: 100vw; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+
+        .chat-bg {
+            background-image: url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png');
+            background-repeat: repeat;
+            background-size: 400px;
+            opacity: 0.06;
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+        .dark .chat-bg { opacity: 0.05; filter: invert(1); }
+
+        .app-container {
+            position: relative;
+            z-index: 10;
+        }
+
+        .bubble-user {
+            background-color: #dcf8c6;
+            align-self: flex-end;
+            border-radius: 7.5px 0 7.5px 7.5px;
+        }
+        .bubble-user::after {
+            content: "";
+            position: absolute;
+            top: 0; right: -8px;
+            width: 0; height: 0;
+            border-left: 10px solid #dcf8c6;
+            border-bottom: 10px solid transparent;
+        }
+
+        .bubble-bot {
+            background-color: #ffffff;
+            align-self: flex-start;
+            border-radius: 0 7.5px 7.5px 7.5px;
+            padding-right: 32px;
+        }
+        .bubble-bot::after {
+            content: "";
+            position: absolute;
+            top: 0; left: -8px;
+            width: 0; height: 0;
+            border-right: 10px solid #ffffff;
+            border-bottom: 10px solid transparent;
+        }
+
+        .dark .bubble-user { background-color: #005c4b; color: #e9edef; }
+        .dark .bubble-user::after { border-left-color: #005c4b; }
+        .dark .bubble-bot { background-color: #202c33; color: #e9edef; }
+        .dark .bubble-bot::after { border-right-color: #202c33; }
+
+        strong { font-weight: 700; color: inherit; }
+
+        .message-container {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            padding: 8px 5%;
+        }
+
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        .msg-anim { animation: msgPop 0.2s cubic-bezier(0.1, 0.7, 1.0, 0.1); }
+        @keyframes msgPop {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .tts-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            opacity: 0.6;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .tts-btn:hover { opacity: 1; transform: scale(1.1); }
+        
+        .speaking-active {
+            color: #00a884 !important;
+            animation: speakerPulse 1.5s infinite;
+        }
+
+        @keyframes speakerPulse {
+            0% { transform: scale(1); opacity: 0.6; }
+            50% { transform: scale(1.2); opacity: 1; }
+            100% { transform: scale(1); opacity: 0.6; }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script>
+        const e = React.createElement;
+        const { useState, useEffect, useRef } = React;
+
+        const apiKey = ""; 
+        const SYSTEM_PROMPT = "Actúa como un abogado experto en derecho laboral mexicano (Ley Federal del Trabajo). Responde de forma clara y fundamentada citando artículos. Háblale siempre de 'tú' al usuario con respeto y frescura, evitando modismos o jergas populares. Al finalizar tu explicación, no uses firmas; en su lugar, pregunta amablemente si el usuario desea saber algo más.";
+
+        // Función para convertir PCM a WAV
+        function pcmToWav(pcmData, sampleRate) {
+            const buffer = new ArrayBuffer(44 + pcmData.length);
+            const view = new DataView(buffer);
+            const writeString = (offset, string) => {
+                for (let i = 0; i < string.length; i++) {
+                    view.setUint8(offset + i, string.charCodeAt(i));
+                }
+            };
+            writeString(0, 'RIFF');
+            view.setUint32(4, 32 + pcmData.length, true);
+            writeString(8, 'WAVE');
+            writeString(12, 'fmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true);
+            view.setUint16(22, 1, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * 2, true);
+            view.setUint16(32, 2, true);
+            view.setUint16(34, 16, true);
+            writeString(36, 'data');
+            view.setUint32(40, pcmData.length, true);
+            const pcmArray = new Uint8Array(pcmData);
+            for (let i = 0; i < pcmArray.length; i++) {
+                view.setUint8(44 + i, pcmArray[i]);
+            }
+            return new Blob([view], { type: 'audio/wav' });
+        }
+
+        function App() {
+            const [messages, setMessages] = useState([
+                { type: 'bot', text: "Hola. Bienvenido al sistema de consulta jurídica sobre la Ley Federal del Trabajo. Estoy aquí para resolver tus dudas.\n\n¿En qué puedo ayudarte hoy?" }
+            ]);
+            const [inputText, setInputText] = useState('');
+            const [isTyping, setIsTyping] = useState(false);
+            const [isListening, setIsListening] = useState(false);
+            const [activeSpeakerIdx, setActiveSpeakerIdx] = useState(null);
+            const [themeMode, setThemeMode] = useState('system');
+            
+            const messagesEndRef = useRef(null);
+            const audioRef = useRef(null);
+
+            useEffect(() => {
+                const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+                const applyTheme = () => {
+                    let shouldBeDark = themeMode === 'system' ? mediaQuery.matches : themeMode === 'dark';
+                    document.documentElement.classList.toggle('dark', shouldBeDark);
+                };
+                applyTheme();
+                mediaQuery.addEventListener('change', applyTheme);
+                return () => mediaQuery.removeEventListener('change', applyTheme);
+            }, [themeMode]);
+
+            useEffect(() => {
+                messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+            }, [messages, isTyping]);
+
+            // Función para dividir texto largo en partes digeribles para la IA
+            const splitTextIntoChunks = (text) => {
+                // Divide por puntos seguidos de espacio para mantener coherencia gramatical
+                const chunks = text.match(/[^.!?]+[.!?]+/g) || [text];
+                // Si algún fragmento es demasiado grande, lo partimos más (aprox 200 caracteres es ideal)
+                return chunks.reduce((acc, chunk) => {
+                    if (chunk.length > 300) {
+                        const subChunks = chunk.match(/.{1,300}(\s|$)/g) || [chunk];
+                        return [...acc, ...subChunks];
+                    }
+                    return [...acc, chunk];
+                }, []);
+            };
+
+            const speakText = async (text, msgIndex) => {
+                // Si ya está hablando el mismo mensaje, lo detenemos
+                if (activeSpeakerIdx === msgIndex) {
+                    if (audioRef.current) {
+                        audioRef.current.pause();
+                        audioRef.current = null;
+                    }
+                    setActiveSpeakerIdx(null);
+                    return;
+                }
+
+                // Detener cualquier audio previo
+                if (audioRef.current) audioRef.current.pause();
+                
+                setActiveSpeakerIdx(msgIndex);
+                
+                const chunks = splitTextIntoChunks(text);
+                
+                const playChunk = async (index) => {
+                    if (index >= chunks.length || activeSpeakerIdx !== msgIndex) {
+                        setActiveSpeakerIdx(null);
+                        return;
+                    }
+
+                    try {
+                        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                contents: [{ parts: [{ text: chunks[index] }] }],
+                                generationConfig: {
+                                    responseModalities: ["AUDIO"],
+                                    speechConfig: {
+                                        voiceConfig: {
+                                            prebuiltVoiceConfig: { voiceName: "Kore" }
+                                        }
+                                    }
+                                },
+                                model: "gemini-2.5-flash-preview-tts"
+                            })
+                        });
+
+                        const result = await response.json();
+                        const audioData = result.candidates[0].content.parts[0].inlineData;
+                        
+                        if (audioData) {
+                            const binaryString = atob(audioData.data);
+                            const bytes = new Uint8Array(binaryString.length);
+                            for (let i = 0; i < binaryString.length; i++) { bytes[i] = binaryString.charCodeAt(i); }
+                            
+                            const wavBlob = pcmToWav(bytes, 24000);
+                            const audioUrl = URL.createObjectURL(wavBlob);
+                            const audio = new Audio(audioUrl);
+                            audioRef.current = audio;
+                            
+                            audio.onended = () => {
+                                URL.revokeObjectURL(audioUrl);
+                                playChunk(index + 1); // Reproducir el siguiente fragmento
+                            };
+                            
+                            await audio.play();
+                        }
+                    } catch (error) {
+                        console.error("Error en fragmento de voz:", error);
+                        setActiveSpeakerIdx(null);
+                    }
+                };
+
+                playChunk(0);
+            };
+
+            const startListening = () => {
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                if (!SpeechRecognition) return;
+                const recognition = new SpeechRecognition();
+                recognition.lang = 'es-MX';
+                recognition.onstart = () => setIsListening(true);
+                recognition.onend = () => setIsListening(false);
+                recognition.onresult = (event) => setInputText(event.results[0][0].transcript);
+                recognition.start();
+            };
+
+            const callAI = async (query) => {
+                try {
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{ parts: [{ text: query }] }],
+                            systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] }
+                        }),
+                    });
+                    const data = await response.json();
+                    return data.candidates?.[0]?.content?.parts?.[0]?.text || "No logré procesar la respuesta.";
+                } catch (err) { return "Hubo un inconveniente con la conexión."; }
+            };
+
+            const sendMessage = async () => {
+                if (!inputText.trim()) return;
+                const text = inputText;
+                setInputText('');
+                setMessages(prev => [...prev, { type: 'user', text }]);
+                setIsTyping(true);
+                const reply = await callAI(text);
+                setMessages(prev => [...prev, { type: 'bot', text: reply }]);
+                setIsTyping(false);
+            };
+
+            return e('div', { className: 'app-container w-full h-full md:max-w-[480px] md:h-[95vh] bg-[#efe7de] dark:bg-[#0b141a] md:rounded-2xl shadow-2xl flex flex-col overflow-hidden relative' },
+                e('div', { className: 'chat-bg' }),
+                e('header', { className: 'bg-[#075e54] dark:bg-[#202c33] text-white p-4 flex items-center gap-3 shrink-0 z-20 shadow-lg' },
+                    e('div', { className: 'w-10 h-10 bg-white/20 rounded-full flex items-center justify-center text-xl' }, '⚖️'),
+                    e('div', { className: 'flex-1' },
+                        e('h1', { className: 'font-bold text-sm tracking-wide' }, 'Consultor LFT'),
+                        e('p', { className: 'text-[10px] text-white/70 font-medium' }, 'En línea')
+                    ),
+                    e('button', { 
+                        onClick: () => setThemeMode(themeMode === 'light' ? 'dark' : 'light'),
+                        className: 'p-2 bg-white/10 hover:bg-white/20 rounded-full transition-all text-sm'
+                    }, themeMode === 'light' ? '🌙' : '☀️')
+                ),
+                e('main', { className: 'flex-1 overflow-y-auto no-scrollbar z-10 flex flex-col pt-4' },
+                    messages.map((m, i) => e('div', { key: i, className: `message-container ${m.type === 'user' ? 'items-end' : 'items-start'}` },
+                        e('div', { 
+                            className: `bubble ${m.type === 'user' ? 'bubble-user' : 'bubble-bot'} msg-anim`,
+                        },
+                            m.type === 'bot' && e('button', {
+                                onClick: () => speakText(m.text, i),
+                                className: `tts-btn ${activeSpeakerIdx === i ? 'speaking-active' : 'text-slate-400 dark:text-slate-500'}`
+                            }, e('svg', { className: 'w-5 h-5 fill-current', viewBox: '0 0 24 24' }, 
+                                e('path', { d: 'M14,3.23V5.29C16.89,6.15 19,8.83 19,12C19,15.17 16.89,17.85 14,18.71V20.77C18.01,19.86 21,16.28 21,12C21,7.72 18.01,4.14 14,3.23M16.5,12C16.5,10.23 15.5,8.71 14,7.97V16.03C15.5,15.29 16.5,13.77 16.5,12M3,9V15H7L12,20V4L7,9H3Z' })
+                            )),
+                            e('span', {
+                                dangerouslySetInnerHTML: { __html: m.text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br/>') }
+                            })
+                        )
+                    )),
+                    isTyping && e('div', { className: 'message-container items-start' }, 
+                        e('div', { className: 'bubble bubble-bot msg-anim text-slate-400 dark:text-slate-500 text-xs italic' }, "Buscando en los artículos...")
+                    ),
+                    e('div', { ref: messagesEndRef })
+                ),
+                e('footer', { className: 'p-3 bg-[#f0f2f5] dark:bg-[#202c33] flex items-end gap-2 z-20 transition-colors duration-500' },
+                    e('div', { className: 'flex-1 flex items-center gap-2 bg-white dark:bg-[#2a3942] rounded-3xl px-3 py-1 shadow-sm' },
+                        e('button', { 
+                            onClick: startListening,
+                            className: `p-2 text-slate-500 dark:text-slate-400 hover:text-green-600 transition-all ${isListening ? 'mic-active' : ''}`
+                        }, e('svg', { className: 'w-5 h-5 fill-current', viewBox: '0 0 24 24' }, e('path', { d: 'M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zM17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z' }))),
+                        e('textarea', {
+                            value: inputText,
+                            onChange: e => setInputText(e.target.value),
+                            onKeyDown: e => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), sendMessage()),
+                            placeholder: 'Escribe tu consulta...',
+                            className: 'flex-1 bg-transparent border-none focus:ring-0 text-[14px] py-2 dark:text-white resize-none h-10 outline-none placeholder:text-slate-400'
+                        })
+                    ),
+                    e('button', { 
+                        onClick: sendMessage,
+                        className: 'w-11 h-11 bg-[#00a884] text-white rounded-full flex items-center justify-center hover:bg-[#008f6f] transition-all shadow-lg active:scale-90 disabled:opacity-50 shrink-0',
+                        disabled: !inputText.trim() || isTyping
+                    }, e('svg', { className: 'w-6 h-6 fill-current ml-1', viewBox: '0 0 24 24' }, e('path', { d: 'M2.01 21L23 12 2.01 3 2 10l15 2-15 2z' })))
+                ),
+                e('div', { className: 'bg-[#f0f2f5] dark:bg-[#202c33] pb-3 px-6 text-center' },
+                    e('p', { className: 'text-[10px] text-slate-400 dark:text-slate-500 tracking-wide font-medium leading-relaxed' }, 
+                        `© ${new Date().getFullYear()} Emilio Ortiz. Queda prohibida cualquier copia o distribución ilegal sin derecho del Autor.`
+                    )
+                )
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(e(App));
+    </script>
+</body>
+</html>
